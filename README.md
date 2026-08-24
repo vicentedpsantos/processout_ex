@@ -90,5 +90,12 @@ conventions:
   variable-length arrays.
 - `Project.delete/3` takes the project id explicitly (the Ruby gem requests the
   literal, broken path `/projects/{project_id}`).
+- `Card.CreateRequest.create/3` returns a `ProcessOut.Card`. The endpoint responds
+  with a card, and the request struct has no `id`, so decoding into it would drop
+  the `card_...` token the caller needs.
+- `ProcessOut.Error` carries `customer_action` and `body`. An unsuccessful response
+  is not always a dead end: a 3-D Secure soft decline (HTTP 410,
+  `card.needs-authentication`) reports the action the customer must complete, and
+  discarding it would make the server side 3DS flow impossible.
 - Flat generated class names are namespaced (`InvoiceShipping` ->
   `ProcessOut.Invoice.Shipping`).
