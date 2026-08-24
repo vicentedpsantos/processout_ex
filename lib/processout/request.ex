@@ -120,10 +120,12 @@ defmodule ProcessOut.Request do
   defp check(status, body) when is_map(body) do
     {:error,
      %Error{
-       type: error_type(status),
+       type: error_type(status, body),
        code: body["error_type"],
        message: body["message"],
-       status: status
+       status: status,
+       customer_action: ProcessOut.Customer.Action.from_map(body["customer_action"]),
+       body: body
      }}
   end
 
@@ -141,6 +143,11 @@ defmodule ProcessOut.Request do
   defp success(status, _body) do
     {:error, %Error{type: error_type(status), message: "unexpected status", status: status}}
   end
+
+  defp error_type(_status, %{"customer_action" => action}) when is_map(action),
+    do: :customer_action_required
+
+  defp error_type(status, _body), do: error_type(status)
 
   defp error_type(400), do: :validation
   defp error_type(401), do: :authentication

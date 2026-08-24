@@ -30,13 +30,21 @@ defmodule ProcessOut.Card.CreateRequest do
                     metadata token_type eci cryptogram applepay_response applepay_mid
                     payment_token contact shipping)a
 
-  @doc "Create a new card."
-  @spec create(Client.t(), map(), keyword()) :: {:ok, t()} | {:error, ProcessOut.Error.t()}
+  @doc """
+  Create a new card.
+
+  Returns a `ProcessOut.Card`, which is what the endpoint responds with. The
+  card `id` is the single use `card_...` token used as the `source` of an
+  authorization, so decoding into this request struct, which has no `id`, would
+  discard it.
+  """
+  @spec create(Client.t(), map(), keyword()) ::
+          {:ok, ProcessOut.Card.t()} | {:error, ProcessOut.Error.t()}
   def create(%Client{} = client, params, opts \\ []) do
     data = Request.take_params(params, @create_params)
 
     with {:ok, body} <- Request.post(client, "/cards", data, opts) do
-      {:ok, from_map(body["card"])}
+      {:ok, ProcessOut.Card.from_map(body["card"])}
     end
   end
 end

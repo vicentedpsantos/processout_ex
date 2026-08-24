@@ -121,6 +121,16 @@ defmodule ProcessOut.InvoiceTest do
       assert conn.assigns.json_body ==
                %{"source" => "card_1", "authorize_only" => true, "capture_amount" => "4.99"}
     end
+
+    test "omits the source when the invoice is already authorized", %{client: client, stub: stub} do
+      stub_success(stub, %{"transaction" => %{"id" => "tr_1", "status" => "completed"}})
+
+      assert {:ok, result} = Invoice.capture(client, "iv_1", nil, %{capture_amount: "4.99"})
+      assert %Transaction{id: "tr_1", status: "completed"} = result.transaction
+
+      assert_received {:request, conn}
+      assert conn.assigns.json_body == %{"capture_amount" => "4.99"}
+    end
   end
 
   describe "void/4" do

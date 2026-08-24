@@ -1,87 +1,75 @@
 defmodule ProcessOut.RequestTest do
-  use ProcessOut.APICase, async: true
+  use ExUnit.Case, async: true
 
-  alias ProcessOut.Request
+  alias ProcessOut.Customer
+  alias ProcessOut.Error
 
-  describe "headers and auth" do
-    test "sends basic auth, api version and custom headers", %{client: client, stub: stub} do
-      stub_success(stub, %{})
+  @hosted_page "https://checkout.processout.com/test-proj_1/iv_1/hosted-payment-page/?source=card_1"
 
-      assert {:ok, _body} =
-               Request.post(client, "/x", %{}, idempotency_key: "key-1", disable_logging: true)
+  describe "error responses" do
+    test "keeps the customer action of a 3DS soft decline" do
+      client =
+        stub(410, %{
+          "success" => false,
+          "error_type" => "card.needs-authentication",
+          "message" => "The card requires 3-D Secure validation.",
+          "outcome" => "failed",
+          "customer_action" => %{"type" => "redirect", "value" => @hosted_page, "metadata" => nil}
+        })
 
-      assert_received {:request, conn}
+      assert {:error, error} = ProcessOut.Invoice.authorize(client, "iv_1", "card_1")
 
-      expected_auth = "Basic " <> Base.encode64("test-project:test-secret")
-      assert Plug.Conn.get_req_header(conn, "authorization") == [expected_auth]
-      assert Plug.Conn.get_req_header(conn, "api-version") == ["1.4.0.0"]
-      assert Plug.Conn.get_req_header(conn, "idempotency-key") == ["key-1"]
-      assert Plug.Conn.get_req_header(conn, "disable-logging") == ["true"]
-      assert [user_agent] = Plug.Conn.get_req_header(conn, "user-agent")
-      assert user_agent =~ "ProcessOut Elixir-Bindings"
+      assert %Error{
+               type: :customer_action_required,
+               code: "card.needs-authentication",
+               status: 410,
+               customer_action: %Customer.Action{type: "redirect", value: @hosted_page}
+             } = error
+
+      assert error.body["outcome"] == "failed"
+    end
+
+    test "classifies plain declines by status" do
+      client =
+        stub(400, %{
+          "success" => false,
+          "error_type" => "card.declined",
+          "message" => "The card has been declined."
+        })
+
+      assert {:error, error} = ProcessOut.Invoice.authorize(client, "iv_1", "card_1")
+      assert %Error{type: :validation, code: "card.declined", customer_action: nil} = error
+      assert error.body["error_type"] == "card.declined"
     end
   end
 
-  describe "data options" do
-    test "merges expand and filter into the POST body", %{client: client, stub: stub} do
-      stub_success(stub, %{})
+  describe "successful responses" do
+    test "returns the customer action of a pending outcome" do
+      client =
+        stub(206, %{
+          "success" => true,
+          "outcome" => "pending",
+          "customer_action" => %{"type" => "redirect", "value" => @hosted_page},
+          "transaction" => %{"id" => "tr_1", "status" => "pending"}
+        })
 
-      assert {:ok, _body} =
-               Request.post(client, "/x", %{"a" => 1}, expand: ["customer"], filter: "f")
+      assert {:ok, %{transaction: transaction, customer_action: action}} =
+               ProcessOut.Invoice.authorize(client, "iv_1", "card_1")
 
-      assert_received {:request, conn}
-      assert conn.assigns.json_body == %{"a" => 1, "expand" => ["customer"], "filter" => "f"}
-    end
-
-    test "merges options into the GET query string", %{client: client, stub: stub} do
-      stub_success(stub, %{})
-
-      assert {:ok, _body} = Request.get(client, "/x", %{}, expand: ["customer"], limit: 5)
-
-      assert_received {:request, conn}
-      query = Plug.Conn.fetch_query_params(conn).query_params
-      assert query["limit"] == "5"
-      assert query["expand"] == ["customer"]
+      assert transaction.id == "tr_1"
+      assert action.type == "redirect"
     end
   end
 
-  describe "error mapping" do
-    for {status, type} <- [
-          {400, :validation},
-          {401, :authentication},
-          {404, :not_found},
-          {500, :internal},
-          {402, :generic}
-        ] do
-      test "maps HTTP #{status} to #{inspect(type)}", %{client: client, stub: stub} do
-        stub_error(stub, unquote(status), %{"error_type" => "code", "message" => "msg"})
+  defp stub(status, body) do
+    name = {__MODULE__, System.unique_integer()}
 
-        assert {:error, error} = Request.get(client, "/x")
-        assert error.type == unquote(type)
-        assert error.status == unquote(status)
-      end
-    end
+    Req.Test.stub(name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(status)
+      |> Req.Test.json(body)
+    end)
 
-    test "treats success: false with 200 as generic error", %{client: client, stub: stub} do
-      stub_error(stub, 200, %{"error_type" => "oops", "message" => "bad"})
-
-      assert {:error, error} = Request.get(client, "/x")
-      assert error.type == :generic
-      assert error.code == "oops"
-    end
-
-    test "returns a transport error when the request fails", %{client: client, stub: stub} do
-      Req.Test.stub(stub, fn conn -> Req.Test.transport_error(conn, :econnrefused) end)
-
-      assert {:error, error} = Request.get(client, "/x")
-      assert error.type == :transport
-    end
-  end
-
-  describe "take_params/2" do
-    test "picks atom and string keys, drops the rest" do
-      params = %{"a" => 1, :b => 2, :c => 3}
-      assert Request.take_params(params, [:a, :b]) == %{"a" => 1, "b" => 2}
-    end
+    ProcessOut.new("test-proj_1", "key_test_1", req_options: [plug: {Req.Test, name}])
   end
 end

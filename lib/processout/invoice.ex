@@ -65,7 +65,7 @@ defmodule ProcessOut.Invoice do
   @authorize_params ~w(device incremental synchronous retry_drop_liability_shift
                        capture_amount enable_three_d_s_2 allow_fallback_to_sale
                        auto_capture_at metadata override_mac_blocking external_three_d_s
-                       save_source)a
+                       save_source preferred_scheme initial_scheme_transaction_id)a
   @capture_params ~w(device incremental authorize_only synchronous
                      retry_drop_liability_shift capture_amount auto_capture_at
                      enable_three_d_s_2 metadata capture_statement_descriptor
@@ -127,7 +127,12 @@ defmodule ProcessOut.Invoice do
     end
   end
 
-  @doc "Capture the invoice using the given source (customer or token)."
+  @doc """
+  Capture the invoice.
+
+  `source` may be `nil` when the invoice was already authorized, in which case
+  it is omitted from the request.
+  """
   @spec capture(Client.t(), String.t(), term(), map(), keyword()) ::
           {:ok,
            %{
@@ -139,7 +144,7 @@ defmodule ProcessOut.Invoice do
     data =
       params
       |> Request.take_params(@capture_params)
-      |> Map.put("source", source)
+      |> put_source(source)
 
     path = "/invoices/#{Request.encode(invoice_id)}/capture"
 
@@ -151,6 +156,12 @@ defmodule ProcessOut.Invoice do
        }}
     end
   end
+
+  # A capture that follows an authorization has no source: the invoice already
+  # knows which instrument was authorized.
+  @spec put_source(map(), term()) :: map()
+  defp put_source(data, nil), do: data
+  defp put_source(data, source), do: Map.put(data, "source", source)
 
   @doc "Get the customer linked to the invoice."
   @spec fetch_customer(Client.t(), String.t(), keyword()) ::
